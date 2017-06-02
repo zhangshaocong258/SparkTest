@@ -9,13 +9,15 @@ import org.apache.spark.api.java.function.Function;
 import org.apache.spark.mllib.fpm.AssociationRules;
 import org.apache.spark.mllib.fpm.FPGrowth;
 import org.apache.spark.mllib.fpm.FPGrowthModel;
+
 /**
  * Created by zsc on 2017/6/2.
  */
 public class FPGrowthTest {
     public static void main(String args[]) {
         SparkConf sparkConf = new SparkConf().setAppName("FP-Growth");
-        JavaSparkContext sc = new JavaSparkContext("local","spark", sparkConf);
+        JavaSparkContext sc = new JavaSparkContext("local", "spark", sparkConf);
+
         JavaRDD<String> data = sc.textFile("data/mllib/sample_fpgrowth.txt");
 
         JavaRDD<List<String>> transactions = data.map(
@@ -27,12 +29,10 @@ public class FPGrowthTest {
                 }
         );
 
-        FPGrowth fpg = new FPGrowth()
-                .setMinSupport(0.2)
-                .setNumPartitions(10);
+        FPGrowth fpg = new FPGrowth().setMinSupport(0.2).setNumPartitions(10);
         FPGrowthModel<String> model = fpg.run(transactions);
 
-        for (org.apache.spark.mllib.fpm.FPGrowth.FreqItemset<String> itemset: model.freqItemsets().toJavaRDD().collect()) {
+        for (FPGrowth.FreqItemset<String> itemset : model.freqItemsets().toJavaRDD().collect()) {
             System.out.println("[" + itemset.javaItems() + "], " + itemset.freq());
         }
 
