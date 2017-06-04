@@ -1,13 +1,7 @@
-import java.io.BufferedWriter;
-import java.io.OutputStreamWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FSDataOutputStream;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
@@ -54,62 +48,70 @@ public class FPGrowthTest {
         }
 
 
+        /**
+         * java版本generateAssociationRules
+         */
         final double finalminConfidence = minConfidence;
-
+        //所有频繁项集
         JavaRDD<FPGrowth.FreqItemset<String>> freqItemsets = model.freqItemsets().toJavaRDD();
-        //找出全部规则
-        JavaPairRDD<List<String>,FPGrowth.FreqItemset<String>> candidates = freqItemsets.flatMapToPair(new PairFlatMapFunction<FPGrowth.FreqItemset<String>,
-                List<String>, FPGrowth.FreqItemset<String>>() {
-            @Override
-            public Iterable<Tuple2<List<String>, FPGrowth.FreqItemset<String>>> call(FPGrowth.FreqItemset<String> stringFreqItemset) throws Exception {
-                List<Tuple2<List<String>, FPGrowth.FreqItemset<String>>> l1 = new ArrayList<Tuple2<List<String>, FPGrowth.FreqItemset<String>>>();
-                List<Tuple2<List<String>, FPGrowth.FreqItemset<String>>> l2 = new ArrayList<Tuple2<List<String>, FPGrowth.FreqItemset<String>>>();
 
-                List<String> items = stringFreqItemset.javaItems();
+        // For candidate rule X => Y, generate (X, (Y, freq(X union Y))) Y长度为1
+        JavaPairRDD<List<String>, FPGrowth.FreqItemset<String>> candidates = freqItemsets
+                .flatMapToPair(new PairFlatMapFunction<FPGrowth.FreqItemset<String>,
+                        List<String>, FPGrowth.FreqItemset<String>>() {
+                    @Override
+                    public Iterable<Tuple2<List<String>, FPGrowth.FreqItemset<String>>> call(FPGrowth.FreqItemset<String> stringFreqItemset) throws Exception {
+                        List<Tuple2<List<String>, FPGrowth.FreqItemset<String>>> l1 = new ArrayList<Tuple2<List<String>, FPGrowth.FreqItemset<String>>>();
+                        List<Tuple2<List<String>, FPGrowth.FreqItemset<String>>> l2 = new ArrayList<Tuple2<List<String>, FPGrowth.FreqItemset<String>>>();
 
-                if (items.size()!=1){
-                    for(int i=0;i<items.size();i++){
-                        List<String> consequent = new ArrayList<String>();
-                        List<String> antecedent = new ArrayList<String>();
+                        List<String> items = stringFreqItemset.javaItems();
 
-                        consequent.clear();
-                        antecedent.clear();
-                        consequent.add(items.get(i));
-                        //items.remove(i);
-                        for(int j=0;j<items.size();j++){
-                            if(j!=i){
-                                antecedent.add(items.get(j));
+                        if (items.size() != 1) {
+                            for (int i = 0; i < items.size(); i++) {
+                                List<String> consequent = new ArrayList<String>();
+                                List<String> antecedent = new ArrayList<String>();
+
+                                consequent.clear();
+                                antecedent.clear();
+                                consequent.add(items.get(i));
+                                //items.remove(i);
+                                for (int j = 0; j < items.size(); j++) {
+                                    if (j != i) {
+                                        antecedent.add(items.get(j));
+                                    }
+                                }
+
+                                FPGrowth.FreqItemset<String> freqItemset2 = new FPGrowth.FreqItemset(consequent.toArray(),
+                                        stringFreqItemset.freq());
+                                l1.add(new Tuple2<List<String>, FPGrowth.FreqItemset<String>>(antecedent, freqItemset2));
                             }
+                            return l1;
+
                         }
+                        return l2;
 
-                        FPGrowth.FreqItemset<String> freqItemset2 = new FPGrowth.FreqItemset(consequent.toArray(),stringFreqItemset.freq());
-                        l1.add(new Tuple2<List<String>, FPGrowth.FreqItemset<String>>(antecedent,freqItemset2));
                     }
-                    return l1;
-
-                }
-                return l2;
-
-            }
-        });
+                });
         System.out.println("candidates" + candidates.count());
-        //模型频繁项集
-        JavaPairRDD<List<String>,Double> modeldata = freqItemsets.flatMapToPair(new PairFlatMapFunction<FPGrowth.FreqItemset<String>,
+
+        // generate all (X, freq(X))
+        JavaPairRDD<List<String>, Double> modeldata = freqItemsets.flatMapToPair(new PairFlatMapFunction<FPGrowth.FreqItemset<String>,
                 List<String>, Double>() {
             @Override
             public Iterable<Tuple2<List<String>, Double>> call(FPGrowth.FreqItemset<String> stringFreqItemset) throws Exception {
                 List<Tuple2<List<String>, Double>> l = new ArrayList<Tuple2<List<String>, Double>>();
-                l.add(new Tuple2<List<String>, Double>(stringFreqItemset.javaItems(),(double)stringFreqItemset.freq()));
+                l.add(new Tuple2<List<String>, Double>(stringFreqItemset.javaItems(), (double) stringFreqItemset.freq()));
                 return l;
             }
         });
         System.out.println("modeldata" + modeldata.count());
 
-        //将freq加进去
-        JavaPairRDD<List<String>,Tuple2<FPGrowth.FreqItemset<String>,Double>> finaldata = candidates.join(modeldata);
+        // Join to get (X, ((Y, freq(X union Y)), freq(X)))
+        JavaPairRDD<List<String>, Tuple2<FPGrowth.FreqItemset<String>, Double>> finaldata = candidates.join(modeldata);
 
-        //结果格式转换
-        JavaPairRDD<List<List<String>>,Double> result = finaldata.flatMapToPair(new PairFlatMapFunction<Tuple2<List<String>, Tuple2<FPGrowth.FreqItemset<String>, Double>>, List<List<String>>, Double>() {
+        //generate rules 输入(X, ((Y, freq(X union Y)), freq(X)))
+        JavaPairRDD<List<List<String>>, Double> result = finaldata.flatMapToPair(new PairFlatMapFunction<Tuple2<List<String>,
+                Tuple2<FPGrowth.FreqItemset<String>, Double>>, List<List<String>>, Double>() {
             @Override
             public Iterable<Tuple2<List<List<String>>, Double>> call(Tuple2<List<String>, Tuple2<FPGrowth.FreqItemset<String>,
                     Double>> listTuple2Tuple2) throws Exception {
@@ -122,28 +124,28 @@ public class FPGrowthTest {
 
                 antecedent = listTuple2Tuple2._1();
                 consequent = listTuple2Tuple2._2()._1().javaItems();
-                confidence = listTuple2Tuple2._2()._1().freq()/listTuple2Tuple2._2()._2();
+                confidence = listTuple2Tuple2._2()._1().freq() / listTuple2Tuple2._2()._2();
                 l2.add(antecedent);
                 l2.add(consequent);
-                l1.add(new Tuple2<List<List<String>>, Double>(l2,confidence));
+                l1.add(new Tuple2<List<List<String>>, Double>(l2, confidence));
                 return l1;
             }
         });
         System.out.println("result" + result.count());
 
-        //置信度过滤
-        JavaPairRDD<List<List<String>>,Double> finalresult = result.filter(new Function<Tuple2<List<List<String>>, Double>, Boolean>() {
+        //filter by confidence
+        JavaPairRDD<List<List<String>>, Double> finalresult = result.filter(new Function<Tuple2<List<List<String>>, Double>, Boolean>() {
             @Override
             public Boolean call(Tuple2<List<List<String>>, Double> v1) throws Exception {
-                Boolean t = v1._2()>=finalminConfidence;
+                Boolean t = v1._2() >= finalminConfidence;
                 return t;
             }
         });
-        System.out.println(("finalresult"+finalresult.count()));
+        System.out.println(("finalresult" + finalresult.count()));
 
         List<Tuple2<List<List<String>>, Double>> finallist = finalresult.collect();
-        for(int i = 0; i < finallist.size(); i++) {
-            System.out.println((finallist.get(i)._1().get(0) + "  " + finallist.get(i)._1().get(1) + "  " + finallist.get(i)._2()));
+        for (int i = 0; i < finallist.size(); i++) {
+            System.out.println((finallist.get(i)._1().get(0) + "=>" + finallist.get(i)._1().get(1) + "  " + finallist.get(i)._2()));
         }
     }
 }
