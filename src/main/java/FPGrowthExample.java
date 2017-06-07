@@ -17,7 +17,7 @@ import scala.Tuple2;
 /**
  * Created by zsc on 2017/6/2.
  */
-public class FPGrowthTest {
+public class FPGrowthExample {
     public static void main(String args[]) {
         SparkConf sparkConf = new SparkConf().setAppName("FP-Growth");
         JavaSparkContext sc = new JavaSparkContext("local", "spark", sparkConf);
