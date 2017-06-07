@@ -1,6 +1,7 @@
 import java.util.HashMap;
 import java.util.Map;
 
+import org.apache.spark.mllib.linalg.Vectors;
 import scala.Tuple2;
 import org.apache.spark.api.java.JavaPairRDD;
 import org.apache.spark.api.java.JavaRDD;
@@ -18,12 +19,29 @@ import org.apache.spark.SparkConf;
  */
 public class DecisionTreeClassificationExample {
     public static void main(String[] args) {
+        final Integer finalLabelIndex = 14;
+        final String delimiter = ",";
 
         SparkConf sparkConf = new SparkConf().setAppName("JavaDecisionTree");
         JavaSparkContext sc = new JavaSparkContext("local", "spark", sparkConf);
 
         // Load and parse the data file.
-        String datapath = "data/mllib/sample_libsvm_data.txt";
+        String datapath = "data/mllib/Adult Census Income Binary Classification dataset1.csv";
+
+        //普通txt文件，内容全部为double
+//        JavaRDD<String> rddData = sc.textFile(datapath);
+//        JavaRDD<LabeledPoint> data = rddData.map(
+//                new Function<String, LabeledPoint>() {
+//                    public LabeledPoint call(String line) {
+//                        String[] parts = line.split(delimiter);
+//                        double[] v = new double[parts.length - 1];
+//                        for (int i = 0; i < parts.length - 1; i++) {
+//                            v[i] = Double.parseDouble(parts[i]);
+//                        }
+//                        return new LabeledPoint(Double.parseDouble(parts[finalLabelIndex]), Vectors.dense(v));
+//                    }
+//                }
+//        );
         JavaRDD<LabeledPoint> data = MLUtils.loadLibSVMFile(sc.sc(), datapath).toJavaRDD();
         // Split the data into training and test sets (30% held out for testing)
         JavaRDD<LabeledPoint>[] splits = data.randomSplit(new double[]{0.7, 0.3});
