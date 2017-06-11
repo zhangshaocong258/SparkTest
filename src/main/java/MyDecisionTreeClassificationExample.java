@@ -1,7 +1,8 @@
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.api.java.function.Function;
+import org.apache.spark.api.java.function.*;
+import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.mllib.linalg.Vector;
 import org.apache.spark.mllib.linalg.Vectors;
 import org.apache.spark.mllib.tree.configuration.FeatureType;
@@ -9,9 +10,6 @@ import org.apache.spark.mllib.tree.model.DecisionTreeModel;
 import org.apache.spark.mllib.tree.model.Node;
 import org.apache.spark.api.java.JavaPairRDD;
 
-import org.apache.spark.api.java.function.Function2;
-import org.apache.spark.api.java.function.PairFlatMapFunction;
-import org.apache.spark.api.java.function.PairFunction;
 import org.apache.spark.mllib.regression.LabeledPoint;
 import org.apache.spark.mllib.tree.DecisionTree;
 import org.apache.spark.mllib.tree.model.Split;
@@ -95,7 +93,11 @@ public class MyDecisionTreeClassificationExample {
         //分别获取数据每一维的离散数据并映射为数值
         final Integer finalLabelIndex = labelIndex;
         final String finalAlgo = algo;
-        JavaPairRDD<String, Integer> futures = data.flatMapToPair(new PairFlatMapFunction<String, String, Integer>() {
+
+        /**
+         * begin
+         */
+        /*JavaPairRDD<String, Integer> futures = data.flatMapToPair(new PairFlatMapFunction<String, String, Integer>() {
             @Override
             public Iterable<Tuple2<String, Integer>> call(String s) throws Exception {
                 ArrayList<Tuple2<String, Integer>> arrayList = new ArrayList<>();
@@ -124,14 +126,17 @@ public class MyDecisionTreeClassificationExample {
                 }
             }
         });
+        futures.saveAsTextFile("data/mllib/futures");
 
         try {
+            //会去重
             JavaPairRDD<String, Integer> distinctFutures = futures.reduceByKey(new Function2<Integer, Integer, Integer>() {
                 @Override
                 public Integer call(Integer v1, Integer v2) throws Exception {
                     return 1;
                 }
             });
+            distinctFutures.saveAsTextFile("data/mllib/distinctFutures");
 
             JavaPairRDD<Integer, String> dimensionFutures = distinctFutures.mapToPair(new PairFunction<Tuple2<String, Integer>, Integer, String>() {
                 @Override
@@ -146,7 +151,64 @@ public class MyDecisionTreeClassificationExample {
 
             JavaPairRDD<Integer, Iterable<String>> reduceFuture = dimensionFutures.groupByKey();
 
-            List<Tuple2<Integer, Iterable<String>>> listOfFutures = reduceFuture.collect();
+            List<Tuple2<Integer, Iterable<String>>> listOfFutures = reduceFuture.collect();*/
+        /**
+         * end
+         */
+
+        /**
+         * begin
+         */
+        JavaRDD<String> features = data.flatMap(new FlatMapFunction<String, String>() {
+            @Override
+            public Iterable<String> call(String s) throws Exception {
+                ArrayList<String> arrayList = new ArrayList<>();
+                String[] temp = s.split(DELIMITER);
+                for (int i = 0; i < temp.length; i++) {
+                    if (finalAlgo.equalsIgnoreCase(CLASSIFICATION) && i == finalLabelIndex) {
+                        arrayList.add(new StringBuilder().append(i).append(Separator).append(temp[i]).toString());
+                        continue;
+                    } else if (finalAlgo.equalsIgnoreCase(REGRESSION) && i == finalLabelIndex) {
+                        try {
+                            Double.valueOf(temp[i]);
+                        } catch (NumberFormatException e) {
+                            arrayList.add(new StringBuilder().append(i).append(Separator).append(temp[i]).toString());
+                        }
+                    }
+                    try {
+                        Double.valueOf(temp[i]);
+                    } catch (Exception e) {
+                        arrayList.add(new StringBuilder().append(i).append(Separator).append(temp[i]).toString());
+                    }
+                }
+                if (arrayList.size() != 0) {
+                    return arrayList;
+                } else {
+                    return null;
+                }            }
+        });
+        features.saveAsTextFile("data/mllib/features");
+
+
+        try {
+            JavaRDD<String> distinctFeatures = features.distinct();
+            distinctFeatures.saveAsTextFile("data/mllib/distinctFeatures");
+
+            JavaPairRDD<Integer, String> dimensionFeatures = distinctFeatures.mapToPair(new PairFunction<String, Integer, String>() {
+                @Override
+                public Tuple2<Integer, String> call(String s) throws Exception {
+                    String[] key = s.split(Separator);
+                    if (key.length == 2) {
+                        return new Tuple2<>(Integer.valueOf(key[0]), key[1]);
+                    }
+                    return null;                }
+            });
+            JavaPairRDD<Integer, Iterable<String>> reduceFeature = dimensionFeatures.groupByKey();
+
+            List<Tuple2<Integer, Iterable<String>>> listOfFutures = reduceFeature.collect();
+            /**
+             * end
+             */
 
             //将映射关系存入HashMap及categoricalFeaturesInfo
             for (int i = 0; i < listOfFutures.size(); i++) {
@@ -274,6 +336,8 @@ public class MyDecisionTreeClassificationExample {
 
         //对输入数据进行预测
         final HashMap<Integer, String> finalLabelMap = labelMap;
+        final Broadcast<HashMap<Integer, String>> finalBro = sc.broadcast(labelMap);
+
         final int finalRightLabel = rightLabelIndex;
         System.out.println("labelMap" + labelMap.toString());
         final String delimiter = ",";
@@ -286,14 +350,14 @@ public class MyDecisionTreeClassificationExample {
 //                        Double predict = model.predict(Vectors.dense(v));
                         Double predict = result[0];
                         String label = String.valueOf(predict);
-                        if (finalLabelMap.size() != 0) {
-                            label = finalLabelMap.get(predict.intValue());
+                        if (finalBro.value().size() != 0) {
+                            label = finalBro.value().get(predict.intValue());
                         }
 
                         //输出结果
                         StringBuffer outputLine = new StringBuffer();
                         if (finalRightLabel != -1) {
-                            outputLine.append(finalLabelMap.get((int) (labeledPoint.label())));
+                            outputLine.append(finalBro.value().get((int) (labeledPoint.label())));
                             outputLine.append(delimiter);
                         }
 
@@ -341,6 +405,7 @@ public class MyDecisionTreeClassificationExample {
 //        for (String str : finalResult) {
 //            System.out.println(str);
 //        }
+//        result.saveAsTextFile("data/mllib/result.csv");
 
         /**
          * 显示图
