@@ -14,16 +14,13 @@ import org.apache.spark.api.java.function.PairFlatMapFunction;
 import org.apache.spark.api.java.function.PairFunction;
 import org.apache.spark.mllib.regression.LabeledPoint;
 import org.apache.spark.mllib.tree.DecisionTree;
+import org.apache.spark.mllib.tree.model.Split;
 import org.apache.spark.storage.StorageLevel;
 import scala.Tuple2;
 
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
+import java.util.*;
 import java.text.DecimalFormat;
-import java.util.Map;
 
 /**
  * Created by zsc on 2017/6/6.
@@ -40,24 +37,49 @@ public class MyDecisionTreeClassificationExample {
 
     private static DecimalFormat decimalFormat = new DecimalFormat("#0.000000");
 
+    private static String input = "data/mllib/Adult Census Income Binary Classification dataset1.csv";    //数据输入路径
+
+    private static String algo = CLASSIFICATION;     //训练算法：分类或回归
+
+    private static Integer maxDepth = 5;  //树最大深度
+
+    private static Integer maxBins = 2;    //树最大分类个数
+
+    private static Integer labelIndex = 14;    //标签索引
+
+    private static Integer numClasses = -1;    //类个数
+
+    private static String impurity = "gini";
+
+    private static int depth = 5;
+
+    private static HashMap<Integer, String>[] reverseMap;
+
+    private static HashMap<String, Integer>[] featureMap;
+
+    private static List<String> features;
+
+    private static String head = "age,workclass,fnlwgt,education,educationnum,maritalstatus,occupation,relationship," +
+            "race,sex,capitalgain,capitalloss,hoursperweek,nativecountry,income";
 
     public static void main(String[] args) {
-        String input = "data/mllib/Adult Census Income Binary Classification dataset1.csv";    //数据输入路径
-        String algo = CLASSIFICATION;     //训练算法：分类或回归
-        Integer maxDepth = 5;  //树最大深度
-        Integer maxBins = 2;    //树最大分类个数
-        Integer labelIndex = 14;    //标签索引
-        Integer numClasses = -1;    //类个数
-        String impurity = "gini";
 
         SparkConf sparkConf = new SparkConf().setAppName("JavaDecisionTree");
         JavaSparkContext sc = new JavaSparkContext("local", "spark", sparkConf);
 
         // Load and parse the data file.
         String datapath = input;
+        JavaRDD<String> dataWithHead = sc.textFile(datapath);
+        head = dataWithHead.first();
+        features = Arrays.asList(head.split(","));
+        labelIndex = features.size() - 1;
 
-        JavaRDD<String> data = sc.textFile(datapath).persist(StorageLevel.MEMORY_AND_DISK());
-
+        JavaRDD<String> data = dataWithHead.filter(new Function<String, Boolean>() {
+            @Override
+            public Boolean call(String str) throws Exception {
+                return !str.equals(head);
+            }
+        }).persist(StorageLevel.MEMORY_AND_DISK());
         //计算数据维度
         int dimension = data.take(1).get(0).split(DELIMITER).length;
 
@@ -67,7 +89,7 @@ public class MyDecisionTreeClassificationExample {
 
         HashMap<String, Integer>[] StringFuture2Int = new HashMap[dimension];//每一列，<标签，数字>，数字递增，且各不相同
         for (int i = 0; i < StringFuture2Int.length; i++) {
-            StringFuture2Int[i] = new HashMap<>();
+            StringFuture2Int[i] = new HashMap<String, Integer>();
         }
 
         //分别获取数据每一维的离散数据并映射为数值
@@ -79,10 +101,10 @@ public class MyDecisionTreeClassificationExample {
                 ArrayList<Tuple2<String, Integer>> arrayList = new ArrayList<>();
                 String[] temp = s.split(DELIMITER);
                 for (int i = 0; i < temp.length; i++) {
-                    if(finalAlgo.equalsIgnoreCase(CLASSIFICATION) && i == finalLabelIndex){
+                    if (finalAlgo.equalsIgnoreCase(CLASSIFICATION) && i == finalLabelIndex) {
                         arrayList.add(new Tuple2<String, Integer>(new StringBuilder().append(i).append(Separator).append(temp[i]).toString(), 1));
                         continue;
-                    }else if(finalAlgo.equalsIgnoreCase(REGRESSION) && i == finalLabelIndex){
+                    } else if (finalAlgo.equalsIgnoreCase(REGRESSION) && i == finalLabelIndex) {
                         try {
                             Double.valueOf(temp[i]);
                         } catch (NumberFormatException e) {
@@ -170,6 +192,8 @@ public class MyDecisionTreeClassificationExample {
             }
         }
 
+        featureMap = StringFuture2Int;
+
         //将输入数据处理成算法所需格式
         final HashMap<String, Integer>[] hashMap = StringFuture2Int;
         JavaRDD<LabeledPoint> parsedData = data.map(
@@ -179,9 +203,9 @@ public class MyDecisionTreeClassificationExample {
                         double[] v = new double[parts.length - 1];
                         double label = 0.0D;
                         try {
-                            if(finalAlgo.equalsIgnoreCase(CLASSIFICATION)) {
+                            if (finalAlgo.equalsIgnoreCase(CLASSIFICATION)) {
                                 label = hashMap[hashMap.length - 1].get(parts[finalLabelIndex]);
-                            }else if(finalAlgo.equalsIgnoreCase(REGRESSION)){
+                            } else if (finalAlgo.equalsIgnoreCase(REGRESSION)) {
                                 try {
                                     label = Double.parseDouble(parts[finalLabelIndex]);
                                 } catch (NumberFormatException e) {
@@ -218,7 +242,8 @@ public class MyDecisionTreeClassificationExample {
 
         // Compute the number of classes from the data.
         numClasses = parsedData.map(new Function<LabeledPoint, Double>() {
-            @Override public Double call(LabeledPoint p) {
+            @Override
+            public Double call(LabeledPoint p) {
                 return p.label();
             }
         }).countByValue().size();
@@ -239,13 +264,11 @@ public class MyDecisionTreeClassificationExample {
          */
 
         int rightLabelIndex = 14;   //正确标签索引
-        int idIndex = -1;           //id索引
-
 
         HashMap<Integer, String> labelMap = new HashMap<>();
 
         //获取标签特征映射关系
-        for(Map.Entry<String, Integer> entry : hashMap[hashMap.length - 1].entrySet()){
+        for (Map.Entry<String, Integer> entry : hashMap[hashMap.length - 1].entrySet()) {
             labelMap.put(entry.getValue(), entry.getKey());
         }
 
@@ -285,11 +308,10 @@ public class MyDecisionTreeClassificationExample {
                      *
                      * @param node : 模型根节点
                      * @param vector : 预测输入
-                     *
-                     * @return  Array[0]:result
-                     *          Array[1]:probility
-                     * */
-                    private double[] predict (Node node, Vector vector) {
+                     * @return Array[0]:result
+                     *         Array[1]:probility
+                     */
+                    private double[] predict(Node node, Vector vector) {
                         if (node.isLeaf()) {
                             double[] result = new double[2];
                             result[0] = node.predict().predict();
@@ -315,11 +337,17 @@ public class MyDecisionTreeClassificationExample {
         );
 
         //得到结果 正确结果，预测结果，概率
-        List<String> finalResult = result.collect();
-        for (String str : finalResult) {
-            System.out.println(str);
-        }
+//        List<String> finalResult = result.collect();
+//        for (String str : finalResult) {
+//            System.out.println(str);
+//        }
 
+        /**
+         * 显示图
+         */
+        reverseFeatureMap();
+        toDebugString(model);
+        System.out.println("*******************");
 
         // Evaluate model on test instances and compute test error
         JavaPairRDD<Double, Double> predictionAndLabel =
@@ -344,12 +372,90 @@ public class MyDecisionTreeClassificationExample {
 //        DecisionTreeModel sameModel = DecisionTreeModel.load(sc.sc(), "myModelPath");
     }
 
-    private static String toDebugString(DecisionTreeModel model) {
+    private static void toDebugString(DecisionTreeModel model) {
+        ArrayList<String> arrayList = new ArrayList<>();
+        int count = 0;
 
-        return "";
+        if (algo.equalsIgnoreCase(CLASSIFICATION)) {
+            System.out.println(String.format("DecisionTreeModel classifier of depth %d depth with %d numNodes nodes",
+                    model.topNode().subtreeDepth(), model.topNode().numDescendants() + 1));
+        }
+
+        System.out.println(subtreeToString(model.topNode(), arrayList, count));
     }
 
-    private static double predict (Node node, Vector vector) {
+
+    private static String subtreeToString(Node top, ArrayList<String> arrayList, int indentFactor) {
+        String prefix = genPrefix(indentFactor);
+        if (top.isLeaf()) {
+            if (reverseMap[reverseMap.length - 1] != null && !reverseMap[reverseMap.length - 1].isEmpty()) {
+                return (prefix + "Predict " + reverseMap[reverseMap.length - 1].get((int) top.predict().predict()) + "\n");
+            } else {
+                return (prefix + "Predict " + top.predict().predict() + "\n");
+            }
+        } else {
+            return (prefix + "If " + splitToString(top.split().get(), true) + "\n" +
+                    subtreeToString(top.leftNode().get(), arrayList, indentFactor + 1) +
+                    prefix + "Else " + splitToString(top.split().get(), false) + "\n" +
+                    subtreeToString(top.rightNode().get(), arrayList, indentFactor + 1));
+        }
+    }
+
+    private static String splitToString(Split split, boolean left) {
+        if (left) {
+            if (reverseMap[split.feature()] != null && !reverseMap[split.feature()].isEmpty()) {
+                scala.collection.Iterator<Object> list = split.categories().iterator();
+                StringBuilder stringBuilder = new StringBuilder();
+                while (list.hasNext()) {
+                    stringBuilder.append(reverseMap[split.feature()].get(Double.valueOf(list.next().toString()).intValue()));
+                    stringBuilder.append(",");
+                }
+                //迭代器被通过后，size length 均为0，即迭代器智能通过一次
+                if (stringBuilder.length() != 0) {
+                    stringBuilder.deleteCharAt(stringBuilder.length() - 1);
+                }
+                return String.format("(feature %s in %s)", features.get(split.feature()), stringBuilder.toString());
+            }
+            return String.format("(feature %s <= %s)", features.get(split.feature()), split.threshold());
+        } else {
+            if (reverseMap[split.feature()] != null && !reverseMap[split.feature()].isEmpty()) {
+                scala.collection.Iterator<Object> list = split.categories().iterator();
+                StringBuilder stringBuilder = new StringBuilder();
+                while (list.hasNext()) {
+                    stringBuilder.append(reverseMap[split.feature()].get(Double.valueOf(list.next().toString()).intValue()));
+                    stringBuilder.append(",");
+                }
+                if (stringBuilder.length() != 0) {
+                    stringBuilder.deleteCharAt(stringBuilder.length() - 1);
+                }
+                return String.format("(feature %s not in %s )", features.get(split.feature()), stringBuilder.toString());
+            }
+            return String.format("(feature %s > %s )", features.get(split.feature()), split.threshold());
+        }
+    }
+
+    private static String genPrefix(int indentFactor) {
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < indentFactor; i++) {
+            sb.append("\t");
+        }
+        return sb.toString();
+    }
+
+
+    private static void reverseFeatureMap() {
+        reverseMap = new HashMap[featureMap.length];
+        for (int i = 0; i < reverseMap.length; i++) {
+            reverseMap[i] = new HashMap<>();
+            for (Map.Entry<String, Integer> entry : featureMap[i].entrySet()) {
+                reverseMap[i].put(entry.getValue(), entry.getKey());
+            }
+        }
+    }
+
+
+    private static double predict(Node node, Vector vector) {
         if (node.isLeaf()) {
             double result = node.predict().predict();
             return result;
