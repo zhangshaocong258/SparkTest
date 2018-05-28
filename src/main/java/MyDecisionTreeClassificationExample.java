@@ -185,7 +185,8 @@ public class MyDecisionTreeClassificationExample {
                     return arrayList;
                 } else {
                     return null;
-                }            }
+                }
+            }
         });
         features.saveAsTextFile("data/mllib/features");
 
@@ -201,7 +202,8 @@ public class MyDecisionTreeClassificationExample {
                     if (key.length == 2) {
                         return new Tuple2<>(Integer.valueOf(key[0]), key[1]);
                     }
-                    return null;                }
+                    return null;
+                }
             });
             JavaPairRDD<Integer, Iterable<String>> reduceFeature = dimensionFeatures.groupByKey();
 
